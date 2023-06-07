@@ -102,7 +102,7 @@ class CEMAgent(base_agent.BaseAgent):
         param_size = self._param_mean.shape[0]
 
         # placeholder
-        candidates = torch.zeros([n, param_size], device=self._device)
+        candidates = torch.randn([n, param_size], device=self._device) * self._param_std + self._param_mean
 
         return candidates
 
@@ -121,6 +121,18 @@ class CEMAgent(base_agent.BaseAgent):
         rets = np.zeros(n)
         ep_lens = np.zeros(n)
 
+        for i in range(n):
+            # Set the candidate parameters to the model
+            torch.nn.utils.vector_to_parameters(candidates[i], self._model.parameters())
+
+            # Evaluate the performance of the model using self._rollout_test
+            num_eps = self._eps_per_candidate
+            test_info = self._rollout_test(num_eps)
+
+            # Calculate the average return and average episode length for the candidate
+            rets[i] = test_info["mean_return"]
+            ep_lens[i] = test_info["mean_ep_len"]
+
         return rets, ep_lens
 
     def _compute_new_params(self, params, rets):
@@ -133,7 +145,19 @@ class CEMAgent(base_agent.BaseAgent):
         param_size = self._param_mean.shape[0]
 
         # placeholder
-        new_mean = torch.zeros(param_size, device=self._device)
-        new_std = torch.ones(param_size, device=self._device)
+        # Determine the number of elite samples based on the elite ratio
+        num_elite_samples = int(self._elite_ratio * len(rets))
+
+        # Get the elite samples indices based on their returns
+        elite_indices = np.argsort(rets)[-num_elite_samples:]
+
+        # Get the elite parameters
+        elite_params = params[elite_indices]
+
+        # Compute the mean and standard debiation of the elite parameters
+        new_mean = torch.mean(elite_params, dim=0)
+        new_std = torch.std(elite_params, dim=0)
+
+        new_std = torch.clamp(new_std, min=self._min_param_std)
 
         return new_mean, new_std
